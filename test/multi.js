@@ -1,7 +1,7 @@
 var tape = require('tape')
 var pull = require('pull-stream')
 
-var Compose = require('../compose')
+var Compose = require('../lib/compose')
 var Net = require('../plugins/net')
 var Ws = require('../plugins/ws')
 var Shs = require('../plugins/shs')

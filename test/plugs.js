@@ -1,9 +1,9 @@
 var tape = require('tape')
 var pull = require('pull-stream')
 var Pushable = require('pull-pushable')
-const fs = require('fs')
+const { getAddresses } = require('../lib/network')
 
-var Compose = require('../compose')
+var Compose = require('../lib/compose')
 var Net = require('../plugins/net')
 var Unix = require('../plugins/unix-socket')
 var Ws = require('../plugins/ws')
@@ -35,6 +35,10 @@ var has_ipv6 = process.env.TRAVIS === undefined
 
 tape('parse, stringify', function (t) {
 
+  t.equal(
+    net.stringify('device'),
+    'net:localhost:4848'
+  )
   t.equal(
     net.stringify('device'),
     'net:localhost:4848'
@@ -141,32 +145,40 @@ if (has_ipv6)
   })
 
 tape('net: do not listen on all addresses', function (t) {
+  // This starts a server listening on localhost and then calls `stringify()`
+  // on a "fake" server configured to listen on the local scope (LAN). This
+  // fake server is never started, so when we attempt connection to it then
+  // as long as we get an error then we can be sure the real server is only
+  // listening on localhost.
+
   var combined = Compose([
     Net({
       scope: 'device',
       port: 4848,
       host: 'localhost',
-      //      external: scopes.host('private') // unroutable IP, but not localhost (e.g. 192.168 ...)
     }),
     shs
   ])
+
+  // This starts the server.
   var close = combined.server(echo)
 
-  //fake
-  var fake_combined = Compose([
+  // this server should never be started, we 
+  var fakeLocal = Compose([
     Net({
       scope: 'local',
       port: 4848,
-      //host: 'localhost',
-      //      external: scopes.host('local') // unroutable IP, but not localhost (e.g. 192.168 ...)
     }),
     shs
   ])
 
-  var addr = fake_combined.stringify('local') // returns external
+
+  var addr = fakeLocal.stringify('local') // returns LAN addresses
   console.log('addr local scope', addr)
+
   combined.client(addr, function (err, stream) {
     t.ok(err, 'should only listen on localhost')
+    t.equal(err.code, 'ECONNREFUSED', 'the error is a connection error')
     close(function() {t.end()})
   })
 })
@@ -457,6 +469,31 @@ tape('multiple scopes different hosts', function(t) {
   t.equal(
     MultiServer([combined1, combined2]).stringify('public'),
     [combined1.stringify('public'), combined2.stringify('public')].join(';')
+  )
+
+  t.end()
+})
+
+tape('meta-address returns multiple', function(t) {
+  var net = Net({ host: '::', port: 4848, scope: ['local', 'device', 'public']})
+  var ws = Ws({ host: '::', port: 4848, scope: ['local', 'device', 'public']})
+
+  var combinedNet = Compose([net, shs])
+  var combinedWs = Compose([ws, shs])
+
+  console.log(combinedNet.stringify('local').split(';'))
+  console.log(combinedWs.stringify('local').split(';'))
+ 
+  const addressCount = getAddresses('::', 'local').length
+
+  t.equal(
+    combinedNet.stringify('local').split(';').length,
+    addressCount
+  )
+
+  t.equal(
+    combinedWs.stringify('local').split(';').length,
+    addressCount
   )
 
   t.end()

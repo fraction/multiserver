@@ -1,19 +1,19 @@
+const toPull = require('stream-to-pull-stream')
+const debug = require('debug')('multiserver:net')
+const {
+  getAddresses,
+  getRandomPort,
+  protocolToAddress
+} = require('../lib/network')
+
 var net
 try {
   net = require('net')
 } catch (_) {
-  // This only throws in browsers because they don't have access to the Node
-  // net library, which is safe to ignore because they shouldn't be running
-  // any methods that require the net library. Maybe we should be setting a
-  // flag somewhere rather than checking whether `net == null`?
+  // Uncaught because this should work in a browser.
 }
 
-var toPull = require('stream-to-pull-stream')
-var scopes = require('multiserver-scopes')
-var debug = require('debug')('multiserver:net')
-
-const isString = (s) => 'string' == typeof s
-const toAddress = (host, port) => ['net', host, port ].join(':')
+const toAddress = protocolToAddress('net')
 
 function toDuplex (str) {
   var stream = toPull.duplex(str)
@@ -21,15 +21,10 @@ function toDuplex (str) {
   return stream
 }
 
-// Choose a dynamic port between 49152 and 65535
-// https://en.wikipedia.org/wiki/List_of_TCP_and_UDP_port_numbers#Dynamic,_private_or_ephemeral_ports
-const getRandomPort = () =>
-  Math.floor(49152 + (65535 - 49152 + 1) * Math.random())
-
 module.exports = ({ scope = 'device', host, port, external, allowHalfOpen, pauseOnConnect }) => {
   // Arguments are `scope` and `external` plus selected options for
   // `net.createServer()` and `server.listen()`.
-  host = host || (isString(scope) && scopes.host(scope))
+  host = host || getAddresses(host, scope)
   port = port || getRandomPort()
 
   function isAllowedScope (s) {
@@ -106,24 +101,24 @@ module.exports = ({ scope = 'device', host, port, external, allowHalfOpen, pause
       }
     },
     stringify: function (targetScope = 'device') {
+      // Check scope to ensure it's allowed on this interface.
       if (isAllowedScope(targetScope) === false) {
         return null
       }
 
       // We want to avoid using `host` if the target scope is public and some
       // external host (like example.com) is defined.
-      const externalHost = targetScope === 'public' && external
-      let resultHost = externalHost || host || scopes.host(targetScope)
+      const isPublic = targetScope === 'public' && external != null
+      const targetHost = isPublic ? external : host
 
-      if (resultHost == null) {
+      const addresses = getAddresses(targetHost, targetScope)
+
+      if (addresses.length === 0) {
         // The device has no network interface for a given `targetScope`.
         return null
       }
 
-      // Remove IPv6 scopeid suffix, if any, e.g. `%wlan0`
-      resultHost = resultHost.replace(/(\%\w+)$/, '')
-
-      return toAddress(resultHost, port)
+      return addresses.map(addr => toAddress(addr, port)).join(';')
     }
   }
 }
